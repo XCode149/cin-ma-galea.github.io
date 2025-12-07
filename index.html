@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Projets de film — Gestion</title>
+  <meta name="description" content="Ajouter, trier et filtrer des projets de film (ce que veulent les gens). Fonctionne hors-ligne via localStorage." />
+  <style>
+    :root{
+      --bg:#0f1724; --card:#0b1220; --muted:#9aa6bb; --accent:#7dd3fc; --glass: rgba(255,255,255,0.03);
+      --success:#86efac; --danger:#fb7185;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:linear-gradient(180deg,var(--bg),#071029 120%);color:#e6eef8;padding:24px;min-height:100vh;-webkit-font-smoothing:antialiased}
+
+    .wrap{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:1fr 420px;gap:18px}
+    header{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:12px}
+    h1{margin:0;font-size:20px}
+    p.lead{margin:0;color:var(--muted);font-size:13px}
+
+    .panel{background:linear-gradient(180deg,var(--card),#071122 120%);border-radius:12px;padding:14px;box-shadow:0 6px 18px rgba(2,6,23,0.6)}
+    .controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+    .controls input[type="search"], .controls select, .controls input[type="text"]{background:var(--glass);border:1px solid rgba(255,255,255,0.04);color:inherit;padding:8px 10px;border-radius:8px;font-size:13px}
+    .btn{background:linear-gradient(180deg,#1f2937,#111827);border:1px solid rgba(255,255,255,0.04);color:var(--accent);padding:8px 10px;border-radius:8px;cursor:pointer;font-weight:600;font-size:13px}
+    .btn.ghost{background:transparent;color:var(--muted);border:1px dashed rgba(255,255,255,0.03)}
+    .btn.warn{color:var(--danger)}
+    .btn.success{color:var(--success)}
+
+    .list{margin-top:10px;display:grid;gap:8px;max-height:64vh;overflow:auto;padding-right:6px}
+    .item{background:rgba(255,255,255,0.02);padding:10px;border-radius:10px;display:flex;gap:10px;align-items:flex-start}
+    .meta{font-size:12px;color:var(--muted);min-width:120px}
+    .title{font-weight:700;margin:0 0 6px 0}
+    .desc{margin:0;color:#dbeafe;font-size:14px;white-space:pre-wrap}
+    .tags{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
+    .tag{font-size:11px;background:rgba(255,255,255,0.03);padding:4px 6px;border-radius:6px;color:var(--muted)}
+
+    form .field{margin-bottom:10px}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+    input[type="text"], textarea, select{width:100%;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:var(--glass);color:inherit;font-size:14px}
+    textarea{min-height:120px;resize:vertical}
+
+    .row{display:flex;gap:8px}
+    .small{flex:1}
+
+    footer{grid-column:1/-1;margin-top:12px;color:var(--muted);font-size:13px;display:flex;justify-content:space-between;align-items:center}
+    .muted{color:var(--muted);font-size:13px}
+    .hidden{display:none}
+
+    @media (max-width:980px){.wrap{grid-template-columns:1fr;padding-bottom:60px}.panel{padding:10px}}
+  </style>
+</head>
+<body>
+  <div class="wrap" role="application" aria-label="Gestion projets de film">
+    <header>
+      <div>
+        <h1>Gestion des projets de film</h1>
+        <p class="lead">Ajoute ce que veulent les gens, trie, filtre, exporte. Fonctionne hors-ligne.</p>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="exportBtn" class="btn">Exporter JSON</button>
+        <label class="btn ghost" for="importFile" style="cursor:pointer">Importer</label>
+        <input id="importFile" type="file" accept="application/json" class="hidden" />
+        <button id="clearBtn" class="btn warn">Tout effacer</button>
+      </div>
+    </header>
+
+    <!-- Left: liste et controles -->
+    <section class="panel" aria-labelledby="liste-projets">
+      <h2 id="liste-projets" style="font-size:15px;margin:0 0 8px 0">Projets</h2>
+
+      <div class="controls" aria-hidden="false">
+        <input id="search" type="search" placeholder="Rechercher titre / description..." aria-label="recherche" />
+        <input id="filterTag" type="text" placeholder="Filtrer par tag (ex: romance)" aria-label="filtre tag" />
+        <select id="sortBy" aria-label="trier">
+          <option value="date_desc">Plus récents</option>
+          <option value="date_asc">Plus anciens</option>
+          <option value="titre_asc">Titre A→Z</option>
+          <option value="titre_desc">Titre Z→A</option>
+          <option value="priorite_desc">Priorité haute→basse</option>
+          <option value="priorite_asc">Priorité basse→haute</option>
+        </select>
+        <button id="clearFilters" class="btn ghost">Réinitialiser</button>
+      </div>
+
+      <div id="list" class="list" tabindex="0" aria-live="polite"></div>
+    </section>
+
+    <!-- Right: formulaire -->
+    <aside class="panel" aria-labelledby="form-projet">
+      <h2 id="form-projet" style="font-size:15px;margin:0 0 8px 0">Ajouter un projet</h2>
+      <form id="projForm">
+        <div class="field">
+          <label for="titre">Titre</label>
+          <input id="titre" name="titre" type="text" required placeholder="Ex: Court-métrage sur le vélo" />
+        </div>
+        <div class="field">
+          <label for="description">Que veulent les gens (description)</label>
+          <textarea id="description" name="description" placeholder="Écris ici ce que veulent les gens, leurs envies, idées..." required></textarea>
+        </div>
+        <div class="field">
+          <label for="tags">Tags (séparés par des virgules)</label>
+          <input id="tags" name="tags" type="text" placeholder="romance, famille, comédie" />
+        </div>
+        <div class="field">
+          <label for="priorite">Priorité</label>
+          <select id="priorite" name="priorite">
+            <option>Haute</option>
+            <option selected>Moyenne</option>
+            <option>Basse</option>
+          </select>
+        </div>
+        <div class="row">
+          <button type="submit" class="btn">Ajouter</button>
+          <button type="button" id="exportSingle" class="btn ghost">Exporter ce projet</button>
+        </div>
+      </form>
+
+      <hr style="border:none;border-top:1px solid rgba(255,255,255,0.03);margin:12px 0" />
+
+      <div>
+        <h3 style="margin:0 0 8px 0;font-size:14px">Importer / Exporter</h3>
+        <p class="muted">Export JSON pour sauvegarde ou partager. Importe un fichier JSON valide contenant un tableau de projets.</p>
+      </div>
+    </aside>
+
+    <footer>
+      <div class="muted">Sauvegarde locale via localStorage — fonctionne hors-ligne.</div>
+      <div class="muted">Tip: utilise l'export pour sauvegarder les projets sur ton ordinateur.</div>
+    </footer>
+  </div>
+
+  <script>
+    (function(){
+      const STORAGE_KEY = 'projets_film_v1';
+      const listEl = document.getElementById('list');
+      const form = document.getElementById('projForm');
+      const exportBtn = document.getElementById('exportBtn');
+      const importFile = document.getElementById('importFile');
+      const clearBtn = document.getElementById('clearBtn');
+      const searchInput = document.getElementById('search');
+      const filterTag = document.getElementById('filterTag');
+      const sortBy = document.getElementById('sortBy');
+      const clearFilters = document.getElementById('clearFilters');
+      const exportSingle = document.getElementById('exportSingle');
+
+      let projets = [];
+
+      function uid(){return Date.now().toString(36) + Math.random().toString(36).slice(2,7)}
+
+      function load(){
+        try{
+          const raw = localStorage.getItem(STORAGE_KEY);
+          projets = raw ? JSON.parse(raw) : [];
+        }catch(e){console.error('Erreur lecture storage', e); projets = []}
+      }
+
+      function save(){
+        try{localStorage.setItem(STORAGE_KEY, JSON.stringify(projets))}catch(e){console.error('Erreur écriture storage', e)}
+      }
+
+      function parseTags(s){
+        return s.split(',').map(t=>t.trim()).filter(Boolean).map(t=>t.toLowerCase());
+      }
+
+      function render(){
+        const q = searchInput.value.trim().toLowerCase();
+        const tagFilter = filterTag.value.trim().toLowerCase();
+        const sort = sortBy.value;
+
+        let out = projets.slice();
+
+        if(q){
+          out = out.filter(p => (p.titre + ' ' + p.description).toLowerCase().includes(q));
+        }
+        if(tagFilter){
+          out = out.filter(p => p.tags.some(t => t.includes(tagFilter)));
+        }
+
+        out.sort((a,b)=>{
+          if(sort==='date_desc') return b.createdAt - a.createdAt;
+          if(sort==='date_asc') return a.createdAt - b.createdAt;
+          if(sort==='titre_asc') return a.titre.localeCompare(b.titre);
+          if(sort==='titre_desc') return b.titre.localeCompare(a.titre);
+          if(sort==='priorite_desc') return priorityValue(b.priorite) - priorityValue(a.priorite);
+          if(sort==='priorite_asc') return priorityValue(a.priorite) - priorityValue(b.priorite);
+          return 0;
+        });
+
+        listEl.innerHTML = '';
+        if(out.length===0){ listEl.innerHTML = '<div class="muted">Aucun projet trouvé.</div>'; return }
+
+        out.forEach(p=>{
+          const item = document.createElement('article'); item.className='item';
+
+          const meta = document.createElement('div'); meta.className='meta';
+          const date = new Date(p.createdAt).toLocaleString();
+          meta.innerHTML = `<div style="font-weight:700">${escapeHtml(p.titre)}</div><div style="margin-top:6px;color:var(--muted);font-size:12px">${date}<br>Priorité: ${p.priorite}</div>`;
+
+          const body = document.createElement('div'); body.style.flex='1';
+          const desc = document.createElement('p'); desc.className='desc'; desc.textContent = p.description;
+
+          const tagsEl = document.createElement('div'); tagsEl.className='tags';
+          p.tags.forEach(t=>{ const span = document.createElement('span'); span.className='tag'; span.textContent = t; tagsEl.appendChild(span) });
+
+          const actions = document.createElement('div'); actions.style.marginLeft='8px'; actions.style.display='flex'; actions.style.flexDirection='column'; actions.style.gap='6px';
+
+          const btnEdit = document.createElement('button'); btnEdit.className='btn ghost'; btnEdit.textContent='Modifier'; btnEdit.onclick = ()=>editProject(p.id);
+          const btnDel = document.createElement('button'); btnDel.className='btn warn'; btnDel.textContent='Supprimer'; btnDel.onclick = ()=>{ if(confirm('Supprimer ce projet ?')){ removeProject(p.id)} };
+          const btnCopy = document.createElement('button'); btnCopy.className='btn'; btnCopy.textContent='Copier JSON'; btnCopy.onclick = ()=>navigator.clipboard && navigator.clipboard.writeText(JSON.stringify(p, null, 2)).then(()=>alert('Copié dans le presse-papier'));
+
+          actions.appendChild(btnEdit); actions.appendChild(btnCopy); actions.appendChild(btnDel);
+
+          body.appendChild(desc); body.appendChild(tagsEl);
+
+          item.appendChild(meta); item.appendChild(body); item.appendChild(actions);
+
+          listEl.appendChild(item);
+        })
+      }
+
+      function priorityValue(p){ if(p==='Haute') return 3; if(p==='Moyenne') return 2; return 1 }
+
+      function addProject(data){ projets.push(data); save(); render(); }
+
+      function removeProject(id){ projets = projets.filter(p=>p.id!==id); save(); render(); }
+
+      function editProject(id){
+        const p = projets.find(x=>x.id===id); if(!p) return alert('Projet introuvable');
+        // Pré-remplir le formulaire pour modifier (mode simple: suppression puis ajout après édition)
+        document.getElementById('titre').value = p.titre;
+        document.getElementById('description').value = p.description;
+        document.getElementById('tags').value = p.tags.join(', ');
+        document.getElementById('priorite').value = p.priorite;
+        // supprimer l'ancien
+        removeProject(id);
+        window.scrollTo({top:0,behavior:'smooth'});
+      }
+
+      function escapeHtml(s){ return String(s).replace(/[&<>"']/g, function(m){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m] }) }
+
+      form.addEventListener('submit', function(e){
+        e.preventDefault();
+        const titre = document.getElementById('titre').value.trim();
+        const description = document.getElementById('description').value.trim();
+        const tags = parseTags(document.getElementById('tags').value);
+        const priorite = document.getElementById('priorite').value;
+        if(!titre || !description){ alert('Titre et description requis'); return }
+        const p = { id: uid(), titre, description, tags, priorite, createdAt: Date.now() };
+        addProject(p);
+        form.reset();
+      });
+
+      exportBtn.addEventListener('click', function(){
+        const dataStr = JSON.stringify(projets, null, 2);
+        const blob = new Blob([dataStr], {type:'application/json'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = 'projets_film_export.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      });
+
+      exportSingle.addEventListener('click', function(){
+        const titre = document.getElementById('titre').value.trim();
+        const description = document.getElementById('description').value.trim();
+        if(!titre && !description){ alert('Remplis le titre ou la description pour exporter un projet simple'); return }
+        const tags = parseTags(document.getElementById('tags').value);
+        const priorite = document.getElementById('priorite').value;
+        const p = { id: uid(), titre: titre || 'Sans titre', description, tags, priorite, createdAt: Date.now() };
+        const dataStr = JSON.stringify(p, null, 2);
+        const blob = new Blob([dataStr], {type:'application/json'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = 'projet_film.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      });
+
+      importFile.addEventListener('change', function(e){
+        const f = e.target.files[0]; if(!f) return;
+        const reader = new FileReader();
+        reader.onload = function(){
+          try{
+            const parsed = JSON.parse(reader.result);
+            if(Array.isArray(parsed)){
+              // merge but keep ids unique
+              const existingIds = new Set(projets.map(p=>p.id));
+              parsed.forEach(p=>{
+                if(!p.id) p.id = uid();
+                if(!p.createdAt) p.createdAt = Date.now();
+                if(!Array.isArray(p.tags)) p.tags = (typeof p.tags === 'string') ? parseTags(p.tags) : (p.tags||[]);
+                if(!existingIds.has(p.id)) projets.push(p);
+              });
+              save(); render();
+              alert('Import réussi (tableau)');
+            }else if(typeof parsed === 'object'){
+              if(!parsed.id) parsed.id = uid();
+              if(!parsed.createdAt) parsed.createdAt = Date.now();
+              if(!Array.isArray(parsed.tags)) parsed.tags = (typeof parsed.tags==='string') ? parseTags(parsed.tags) : (parsed.tags||[]);
+              projets.push(parsed); save(); render(); alert('Import réussi (objet)');
+            }else{
+              alert('Fichier JSON non reconnu');
+            }
+          }catch(err){ alert('Erreur à l'import: ' + err.message) }
+          importFile.value = '';
+        };
+        reader.readAsText(f);
+      });
+
+      clearBtn.addEventListener('click', function(){ if(confirm('Supprimer tous les projets et réinitialiser ?')){ projets = []; save(); render(); } });
+
+      searchInput.addEventListener('input', render);
+      filterTag.addEventListener('input', render);
+      sortBy.addEventListener('change', render);
+      clearFilters.addEventListener('click', function(){ searchInput.value=''; filterTag.value=''; sortBy.value='date_desc'; render(); });
+
+      // initial sample data if empty (optional)
+      function seedIfEmpty(){ if(projets.length===0){ projets.push({id:uid(),titre:'Court-métrage: L'attente',description:'Les gens veulent une histoire courte, intimiste, centrée sur un personnage qui attend le retour d'un proche.',tags:['drame','intimiste'],priorite:'Moyenne',createdAt:Date.now()-1000*60*60*24}); save(); }}
+
+      // helper to normalize tags in storage
+      function normalizeStored(){ projets = projets.map(p=>({ ...p, tags: Array.isArray(p.tags) ? p.tags.map(t=>String(t).toLowerCase()) : parseTags(String(p.tags)||'') })) }
+
+      // boot
+      load(); normalizeStored(); seedIfEmpty(); render();
+
+      // expose for debugging
+      window.projetsFilm = { get: ()=>projets, save, load, render };
+
+    })();
+  </script>
+</body>
+</html>
